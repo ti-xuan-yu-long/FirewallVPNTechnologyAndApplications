@@ -128,7 +128,7 @@ gcc dns_lookup.c -o dns_lookup
 | :--------------------------- | :------------- |
 | 事务 ID（Transaction ID）    |       0x4b4d         |
 | 查询域名（Query Name）       |      www.yxnu.edu.cn          |
-| 查询类型（Type）             |     IPv4(0x0800)           |
+| 查询类型（Type）             |     A           |
 | 目的端口                     |       53         |
 
 **嵌入截图：**
