@@ -7,7 +7,7 @@
 
 ## 二、拓扑图和地址规划
 ### 网络拓扑图
-![topology](./topology.png)
+![topology](./screenshots/topology.png)
 
 ### 地址规划表
 | 区域 | 网段 | fw侧地址 | 主机地址 | 说明 |
