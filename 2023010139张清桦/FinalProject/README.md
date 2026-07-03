@@ -9,7 +9,7 @@
 
 ### 拓扑图
 
-![拓扑图](topology.png)
+![拓扑图](screenshots/topology.png)
 
 ### 地址规划表
 
