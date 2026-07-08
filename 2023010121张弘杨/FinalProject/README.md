@@ -227,7 +227,7 @@ sudo ip netns exec fw iptables -L FORWARD -v -n --line-numbers | grep "REJECT"
 | internet| 拒绝   | 允许(DNAT)| 拒绝  | -        |
 | VPN(remote) | 允许 | 允许   | 拒绝   | 允许(SNAT) |
 
-### 4.3 防火墙测试结果（test_firewall.sh）
+### 4.3 防火墙测试结果
 
 8 项测试全部 PASS：
 
@@ -265,7 +265,7 @@ sudo ip netns exec fw iptables -L FORWARD -v -n --line-numbers | grep "REJECT"
 - `vpn-fw.conf`：fw 端（服务端）WireGuard 配置
 - `vpn-remote.conf`：remote 端（客户端）WireGuard 配置
 
-### 5.2 测试结果（test_vpn.sh）
+### 5.2 测试结果
 
 VPN 4 项测试全部 PASS：
 
@@ -293,7 +293,7 @@ VPN 4 项测试全部 PASS：
 
 **WSL2 限制说明：** WSL2 内核不会将 iptables LOG 消息写入 dmesg/journalctl，因此通过 `iptables -L -v -n` 的包计数器来观察规则命中情况。
 
-### 6.2 日志分析报告（log_audit.sh）
+### 6.2 日志分析报告
 
 模拟 5 种违规访问，观察 LOG/REJECT 计数器变化：
 
@@ -309,7 +309,7 @@ VPN 4 项测试全部 PASS：
 
 ## 七、第五部分：攻防演练
 
-### 7.1 攻击演练（attack_test.sh）
+### 7.1 攻击演练
 
 **攻击 1：nmap 端口扫描**
 
@@ -335,7 +335,7 @@ VPN 4 项测试全部 PASS：
 - 结果：伪造包被丢弃，无合法握手
 - 分析：WireGuard 使用加密握手认证，无合法私钥的伪造包无法建立隧道
 
-### 7.2 防御分析（defense_analysis.sh）
+### 7.2 防御分析
 
 通过 `iptables -L -v -n` 统计各规则的包命中数：
 
@@ -343,7 +343,7 @@ VPN 4 项测试全部 PASS：
 - **SSH 入侵尝试汇总**：office -> dmz:22、internet -> dmz:22、VPN -> dmz:22 的 REJECT 计数
 - **允许流量统计**：office -> dmz:8080、internet -> dmz(DNAT) 的 ACCEPT 计数
 
-### 7.3 边界测试（improvement.sh）
+### 7.3 边界测试
 
 **connlimit DDoS 防御：**
 
@@ -365,7 +365,7 @@ VPN 4 项测试全部 PASS：
 ### 8.2 WireGuard 隧道握手成功但 ping 100% 丢包
 
 - **现象**：`wg show` 显示握手成功，但 remote ping office 100% 丢包
-- **原因**：`vpn_setup.sh` 检测到 wg0 接口已存在时跳过了 iptables 规则的添加，导致 FORWARD 链中没有 VPN 相关的允许规则
+- **原因**：wg0 接口已存在时跳过了 iptables 规则的添加，导致 FORWARD 链中没有 VPN 相关的允许规则
 - **解决**：手动添加 VPN 的 FORWARD 规则（wg0 -> office/dmz/guest）
 
 ### 8.3 rp_filter 干扰隧道流量
