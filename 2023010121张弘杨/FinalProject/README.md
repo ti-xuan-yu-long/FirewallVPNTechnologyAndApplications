@@ -73,7 +73,9 @@
 3. 为每个命名空间内的接口配置 IP 地址
 4. 在 fw 命名空间启用 IP 转发（`net.ipv4.ip_forward=1`）
 5. 为每个非 fw 命名空间配置默认路由，指向 fw 侧的网关地址
-6. 关闭各命名空间的 rp_filter，避免隧道流量被反向路径过滤丢弃
+6. 启动 HTTP 测试服务（dmz:8080、office:8000、internet:80）
+7. 生成 WireGuard 密钥对并创建 wg0 隧道接口
+8. 支持 `sudo bash setup.sh cleanup` 清理环境
 
 ### 3.2 连通性测试结果
 
@@ -89,41 +91,104 @@
 
 ### 3.3 脚本清单
 
-| 脚本 | 功能 |
-|------|------|
-| setup.sh | 创建网络拓扑（6 个命名空间 + 5 对 veth） |
-| firewall.sh | 配置 iptables 防火墙规则 |
-| vpn_setup.sh | 配置 WireGuard VPN 隧道 |
-| start_services.sh | 启动 HTTP 测试服务 |
-| test_firewall.sh | 防火墙连通性测试（8 项） |
-| test_vpn.sh | VPN 连通性测试（4 项） |
-| log_audit.sh | 安全审计与日志统计 |
-| attack_test.sh | 攻击模拟（3 个场景） |
-| defense_analysis.sh | 防御分析（规则命中统计） |
-| improvement.sh | 改进方案（connlimit DDoS 防御） |
-| cleanup.sh | 清理环境（删除命名空间和 wg0） |
+| 脚本/文件 | 功能 |
+|---------|------|
+| setup.sh | 创建网络拓扑 + 启动HTTP服务 + 配置WireGuard VPN + 清理环境 |
+| firewall.sh | 配置 iptables 防火墙规则 + LOG审计 + connlimit DDoS防御 + VPN FORWARD规则 |
+| vpn-fw.conf | WireGuard 服务端配置文件 |
+| vpn-remote.conf | WireGuard 客户端配置文件 |
+| analysis.md | 攻防演练分析报告 |
+| troubleshooting.md | 故障排查报告 |
 
 ### 3.4 运行步骤
 
 ```bash
-sudo bash cleanup.sh        # 先清理旧环境
-sudo bash setup.sh           # 创建网络拓扑
-sudo bash firewall.sh        # 配置防火墙规则
-sudo bash vpn_setup.sh       # 配置 WireGuard VPN
-sudo bash start_services.sh  # 启动测试服务
-sudo bash test_firewall.sh   # 防火墙测试
-sudo bash test_vpn.sh        # VPN 测试
-sudo bash log_audit.sh       # 安全审计
-sudo bash attack_test.sh     # 攻击模拟
-sudo bash defense_analysis.sh # 防御分析
-sudo bash improvement.sh     # DDoS 防御改进
+# 1. 搭建完整环境（拓扑 + HTTP服务 + WireGuard VPN）
+sudo bash setup.sh
+
+# 2. 配置防火墙（iptables规则 + LOG + connlimit + VPN FORWARD）
+sudo bash firewall.sh
+
+# 3. 清理环境（删除命名空间和 wg0）
+sudo bash setup.sh cleanup
+```
+
+### 3.5 测试命令
+
+**防火墙测试（8 项）：**
+
+```bash
+# Test 1: office -> dmz:8080 (应该成功)
+sudo ip netns exec office bash -c "timeout 3 bash -c 'echo ok > /dev/tcp/10.40.0.2/8080' && echo PASS || echo FAIL"
+
+# Test 2: office -> dmz:22 (应该失败)
+sudo ip netns exec office bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.40.0.2/22' && echo FAIL || echo PASS"
+
+# Test 3: guest -> office (应该失败)
+sudo ip netns exec guest bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.20.0.2/8000' && echo FAIL || echo PASS"
+
+# Test 4: guest -> dmz (应该失败)
+sudo ip netns exec guest bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.40.0.2/8080' && echo FAIL || echo PASS"
+
+# Test 5: guest -> internet (应该成功)
+sudo ip netns exec guest bash -c "timeout 3 bash -c 'echo ok > /dev/tcp/203.0.113.10/80' && echo PASS || echo FAIL"
+
+# Test 6: office -> internet (应该成功)
+sudo ip netns exec office bash -c "timeout 3 bash -c 'echo ok > /dev/tcp/203.0.113.10/80' && echo PASS || echo FAIL"
+
+# Test 7: internet -> 203.0.113.1:80 DNAT (应该成功)
+sudo ip netns exec internet bash -c "timeout 3 bash -c 'echo ok > /dev/tcp/203.0.113.1/80' && echo PASS || echo FAIL"
+
+# Test 8: internet -> dmz:22 (应该失败)
+sudo ip netns exec internet bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/203.0.113.1/22' && echo FAIL || echo PASS"
+```
+
+**VPN 测试（4 项）：**
+
+```bash
+# Test 1: remote -> office:8000 (应该成功)
+sudo ip netns exec remote bash -c "timeout 3 bash -c 'echo ok > /dev/tcp/10.20.0.2/8000' && echo PASS || echo FAIL"
+
+# Test 2: remote -> dmz:8080 (应该成功)
+sudo ip netns exec remote bash -c "timeout 3 bash -c 'echo ok > /dev/tcp/10.40.0.2/8080' && echo PASS || echo FAIL"
+
+# Test 3: remote -> dmz:22 (应该失败)
+sudo ip netns exec remote bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.40.0.2/22' && echo FAIL || echo PASS"
+
+# Test 4: remote -> guest (应该失败)
+sudo ip netns exec remote bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.30.0.2/80' && echo FAIL || echo PASS"
+```
+
+**安全审计（模拟5种违规访问并查看计数器）：**
+
+```bash
+# 1. office -> dmz:22
+sudo ip netns exec office bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.40.0.2/22' || true"
+
+# 2. guest -> office
+sudo ip netns exec guest bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.20.0.2/8000' || true"
+
+# 3. guest -> dmz
+sudo ip netns exec guest bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.40.0.2/8080' || true"
+
+# 4. internet -> dmz:22
+sudo ip netns exec internet bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/203.0.113.1/22' || true"
+
+# 5. remote -> dmz:22
+sudo ip netns exec remote bash -c "timeout 2 bash -c 'echo ok > /dev/tcp/10.40.0.2/22' || true"
+
+# 查看 LOG 计数器
+sudo ip netns exec fw iptables -L FORWARD -v -n --line-numbers | grep "LOG"
+
+# 查看 REJECT 计数器
+sudo ip netns exec fw iptables -L FORWARD -v -n --line-numbers | grep "REJECT"
 ```
 
 ## 四、第二部分：防火墙策略实现
 
 ### 4.1 firewall.sh 说明
 
-`firewall.sh` 在 fw 命名空间内配置 iptables 规则，采用"默认拒绝"（Default Deny）原则：
+`firewall.sh` 在 fw 命名空间内配置 iptables 规则，采用"默认拒绝"（Default Deny）原则，同时包含 LOG 审计规则、connlimit DDoS 防御和 VPN FORWARD 规则：
 
 **默认策略：**
 - INPUT 链：DROP
@@ -137,6 +202,7 @@ sudo bash improvement.sh     # DDoS 防御改进
 
 **FORWARD 链规则：**
 - 允许 `RELATED,ESTABLISHED` 状态包
+- connlimit DDoS 防御：限制单 IP 到 dmz:8080 的并发连接数不超过 10
 - 允许 office -> dmz:8080（业务访问）
 - 拒绝 office -> dmz:22（SSH），先 LOG 再 REJECT
 - 允许 internet -> dmz:8080（通过 DNAT 后访问）
@@ -322,17 +388,17 @@ VPN 4 项测试全部 PASS：
 - **原因**：wg-quick 会自动添加 AllowedIPs 对应的路由，但这些路由与现有的物理接口路由冲突
 - **解决**：放弃 wg-quick，手动使用 `ip link add wg0 type wireguard` 创建接口，设置 `Table=off` 禁止自动路由
 
-### 9.3 vpn_setup.sh 幂等性问题
+### 9.3 VPN 规则幂等性问题
 
-- **问题**：重复运行 vpn_setup.sh 时，wg0 接口已存在导致脚本提前退出，iptables 规则未添加
-- **原因**：脚本在检测到 wg0 存在后直接 return，跳过了后续的 iptables 规则配置
-- **解决**：手动补充 VPN FORWARD 规则；建议后续改进脚本逻辑，在 wg0 已存在时只补充规则
+- **问题**：重复运行环境搭建时，wg0 接口已存在导致 VPN FORWARD 规则未添加
+- **原因**：wg0 接口已存在时，iptables 规则的添加被跳过
+- **解决**：将 VPN FORWARD 规则合并进 firewall.sh，每次运行 firewall.sh 时都会重新添加所有规则
 
 ### 9.4 HTTP 服务未启动导致测试失败
 
-- **问题**：运行 test_firewall.sh 时，部分测试显示 Connection refused
-- **原因**：忘记运行 start_services.sh，dmz/office/internet 的 HTTP 服务未启动
-- **解决**：在测试前先运行 `sudo bash start_services.sh`
+- **问题**：运行测试命令时，部分测试显示 Connection refused
+- **原因**：忘记启动 HTTP 服务，dmz/office/internet 的 HTTP 服务未运行
+- **解决**：HTTP 服务已合并进 setup.sh，搭建环境时自动启动
 
 ## 十、总结与思考
 
